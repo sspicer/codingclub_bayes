@@ -1,0 +1,212 @@
+-------
+title: Bayes Loot Boxes - Coding Club
+-------
+
+```{r}
+library(Matrix)
+library(tidyverse)
+library(rstatix)
+library(BayesFactor)
+library(rstan)
+library(brms)
+source("KendallBayes.R") #loads functions
+
+```
+
+```{r}
+
+# Load data:
+gdata <- read_csv("gatewaydata.csv")
+
+# Ppts who bought LB first and gambled later:
+LBfirst <- gdata %>% 
+  filter(LBAgePurchased < AgeGambled | LBGambFirst == "Loot boxes")
+
+
+```
+
+```{r}
+
+## Difference in Y/N for gateway question...
+
+# PGSI and gateway...
+
+# For ppts who LB first is there diff in PGSI for Y/N on gateway question?
+LBfirst %>% group_by(LBContribGamble1) %>% summarise(mean(PGSI))
+wilcox.test(PGSI ~ LBContribGamble1, data = LBfirst)
+ttestBF(formula = PGSI ~ LBContribGamble1, data = LBfirst)
+
+
+```
+```{r}
+
+LBfirst %>% anova_test(LootBoxSpend ~ Gender*LBContribGamble1, type = 3)
+
+LBfirst$LBContribGamble1 <- as.factor(LBfirst$LBContribGamble1)
+LBfirst$Gender <- as.factor(LBfirst$Gender)
+LBfirst$PID <- as.factor(LBfirst$PID)
+
+
+bf <- anovaBF(formula = LootBoxSpend ~ Gender*LBContribGamble1, 
+              data = LBfirst)
+bf
+
+bf[4] / bf[3]
+
+
+
+```
+
+```{r}
+
+## Additional analysis - separate to analysing gateway effects.
+
+# Does LB spend correlate with problem gambling:
+cor.test(gdata$PGSI, gdata$LootBoxSpend, method = "kendall") #freq
+cor_out <- cor.test(gdata$PGSI, gdata$LootBoxSpend, method = "kendall") 
+VarSpendKendall <- as.numeric(cor_out$estimate)
+kendallBF(VarSpendKendall, 1102) # BF (n.b. 1102 = ppts)
+kendallBFCI(VarSpendKendall, 1102)
+
+
+# Or for a (simpler) method based on Pearson's R:
+correlationBF(gdata$PGSI, gdata$LootBoxSpend)
+
+
+```
+
+
+```{r}
+
+# Ppts who answered yes to gateway effects:
+LBGateway <- LBfirst %>% 
+  filter(LBContribGamble1 == "Yes")
+
+# What proportion were under 18 when first purchased LB:
+LBGateway <- LBGateway %>% 
+  mutate(Under18 = case_when(
+    LBAgePurchased < 18 ~ "Y",
+    LBAgePurchased >= 18 ~ "N"
+  ))
+
+table(LBGateway$Under18)
+prop.table(table(LBGateway$Under18))
+
+# For ppts who answered no...
+LBNGateway <- LBfirst %>% 
+  filter(LBContribGamble1 == "No")
+
+# What proportion were under 18 when first purchased LB:
+LBNGateway <- LBNGateway %>% 
+  mutate(Under18 = case_when(
+    LBAgePurchased < 18 ~ "Y",
+    LBAgePurchased >= 18 ~ "N"
+  ))
+
+table(LBNGateway$Under18)
+prop.table(table(LBNGateway$Under18))
+
+# Do proportions differ (LB yes v LB no):
+prop.test(
+  x = c(sum(LBGateway$Under18 == "Y"), sum(LBNGateway$Under18 == "Y")),
+  n = c(nrow(LBGateway), nrow(LBNGateway)))
+
+# Bayesian method (plus combined table):
+matrix(c(sum(LBGateway$Under18 == "N"),
+         sum(LBNGateway$Under18 == "N"),
+         sum(LBGateway$Under18 == "Y"),
+         sum(LBNGateway$Under18 == "Y")), 
+       nrow =2, ncol =2, 
+       dimnames = list(c("Yes", "No"), c("18+", "17-")))
+
+contingencyTableBF(matrix(c(sum(LBGateway$Under18 == "N"),
+                            sum(LBNGateway$Under18 == "N"),
+                            sum(LBGateway$Under18 == "Y"),
+                            sum(LBNGateway$Under18 == "Y")), 
+                          nrow =2, ncol =2, 
+                          dimnames = list(c("Yes", "No"), c("18+", "17-"))), 
+                   fixedMargin = "rows", sampleType = "indepMulti")
+
+```
+
+
+Regression:
+
+```{r}
+
+options(mc.cores = parallel::detectCores()-1)
+
+```
+
+Regression modelling... import data.
+
+```{r}
+
+# Import data - and select columns:
+regdata <- read_csv("gatewaydata.csv") %>%
+ select("PID", "RLI", "GRCS", "PGSI", "IGD", "BISB", "LBAgePurchased", 
+        "AgeGambled", "MonthlyIncome", "Sex", "Gender", "Age", "LootBoxSpend",
+        "GamblingSpend")
+
+```
+
+Below standardises all predictors - apart from categorical.
+Loot box spend is also omitted as it's the outcome var.
+N.b. all scales have been adjusted to start at zero
+
+```{r}
+
+# Mutate by two standard deviations:
+z2sd <- function(x) {x / (2*sd(x))}
+regdata_z <- regdata %>% 
+  mutate_at(vars(-matches("RLI|Sex|Gender")), list(z2sd))
+
+```
+
+Implement penalised model...
+```{r}
+
+bayesreg <- brm(bf(RLI ~ IGD+GRCS), 
+                      iter=20000, 
+                      chains=6,
+                      data = regdata_z, 
+                      #family = gaussian(),
+                      #ModelType <- set_prior("normal(0,2)", class = "b"),
+                      file = "minimulti.rds")
+
+```
+
+```{r}
+
+# This tells you whether model converged (should be a uniform plot of "noise"):
+bayesreg %>% bayesplot::mcmc_trace()
+
+# Summary - check rhat (should be 1) and ESS (should be > 5K):
+summary(bayesreg)
+
+```
+
+```{r}
+# Spend:
+plotdat <- bind_rows(
+  bayesreg %>% as_tibble()) %>%
+  select(starts_with("b_")) %>% 
+  pivot_longer(everything()) %>% 
+  mutate(name = str_replace_all(name, "b_", "")) %>% 
+  filter(!str_detect(name, "Interc")) %>%
+  group_by(name)
+
+plotout <- plotdat %>% 
+    ggplot(aes(name, value)) + 
+    tidybayes::stat_halfeye(point_interval=tidybayes::mean_hdci, 
+                            normalise="xy", 
+                            fill="lightgrey",
+                            .width = 0.95) +
+    coord_flip() +
+    theme_minimal() +
+    xlab("") + ylab("£ Spent") +
+    geom_hline(yintercept = 0)
+
+plotout
+
+```
