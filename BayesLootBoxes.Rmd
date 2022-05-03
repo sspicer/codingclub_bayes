@@ -3,7 +3,6 @@ title: Bayes Loot Boxes - Coding Club
 -------
 
 ```{r}
-library(Matrix)
 library(tidyverse)
 library(rstatix)
 library(BayesFactor)
@@ -22,49 +21,44 @@ gdata <- read_csv("gatewaydata.csv")
 LBfirst <- gdata %>% 
   filter(LBAgePurchased < AgeGambled | LBGambFirst == "Loot boxes")
 
-
 ```
 
+BAYESIAN T-TEST...
 ```{r}
-
-## Difference in Y/N for gateway question...
-
-# PGSI and gateway...
 
 # For ppts who LB first is there diff in PGSI for Y/N on gateway question?
 LBfirst %>% group_by(LBContribGamble1) %>% summarise(mean(PGSI))
-wilcox.test(PGSI ~ LBContribGamble1, data = LBfirst)
-ttestBF(formula = PGSI ~ LBContribGamble1, data = LBfirst)
-
+LBfirst %>% t_test(PGSI ~ LBContribGamble1, paired = FALSE)
+ttestBF(formula = PGSI ~ LBContribGamble1, data = LBfirst, paired = FALSE)
 
 ```
+BAYESIAN ANOVA...
 ```{r}
 
-LBfirst %>% anova_test(LootBoxSpend ~ Gender*LBContribGamble1, type = 3)
+# For ppts who LB first, is there an effect of gender & Y/N on gateway question?
+LBfirst %>% anova_test(GamblingSpend ~ Gender*LBContribGamble1, type = 3)
 
+# Prep data:
 LBfirst$LBContribGamble1 <- as.factor(LBfirst$LBContribGamble1)
 LBfirst$Gender <- as.factor(LBfirst$Gender)
-LBfirst$PID <- as.factor(LBfirst$PID)
 
-
-bf <- anovaBF(formula = LootBoxSpend ~ Gender*LBContribGamble1, 
+# Get BF's:
+bf <- anovaBF(formula = GamblingSpend ~ Gender*LBContribGamble1, 
               data = LBfirst)
 bf
 
+# Get BF for interaction:
 bf[4] / bf[3]
-
-
 
 ```
 
+BAYESIAN CORRELATIONS...
 ```{r}
-
-## Additional analysis - separate to analysing gateway effects.
 
 # Does LB spend correlate with problem gambling:
 cor.test(gdata$PGSI, gdata$LootBoxSpend, method = "kendall") #freq
 cor_out <- cor.test(gdata$PGSI, gdata$LootBoxSpend, method = "kendall") 
-VarSpendKendall <- as.numeric(cor_out$estimate)
+VarSpendKendall <- as.numeric(cor_out$estimate) # extract Kendall value
 kendallBF(VarSpendKendall, 1102) # BF (n.b. 1102 = ppts)
 kendallBFCI(VarSpendKendall, 1102)
 
@@ -75,7 +69,7 @@ correlationBF(gdata$PGSI, gdata$LootBoxSpend)
 
 ```
 
-
+BAYESIAN PROPORTIONS...
 ```{r}
 
 # Ppts who answered yes to gateway effects:
@@ -89,6 +83,7 @@ LBGateway <- LBGateway %>%
     LBAgePurchased >= 18 ~ "N"
   ))
 
+# Tables:
 table(LBGateway$Under18)
 prop.table(table(LBGateway$Under18))
 
@@ -130,15 +125,13 @@ contingencyTableBF(matrix(c(sum(LBGateway$Under18 == "N"),
 ```
 
 
-Regression:
+Bayesian Regression...
 
 ```{r}
 
 options(mc.cores = parallel::detectCores()-1)
 
 ```
-
-Regression modelling... import data.
 
 ```{r}
 
@@ -163,15 +156,14 @@ regdata_z <- regdata %>%
 
 ```
 
-Implement penalised model...
+Implement model...
 ```{r}
 
+# Using default priors and response distribution...
 bayesreg <- brm(bf(RLI ~ IGD+GRCS), 
                       iter=20000, 
                       chains=6,
                       data = regdata_z, 
-                      #family = gaussian(),
-                      #ModelType <- set_prior("normal(0,2)", class = "b"),
                       file = "minimulti.rds")
 
 ```
@@ -204,7 +196,7 @@ plotout <- plotdat %>%
                             .width = 0.95) +
     coord_flip() +
     theme_minimal() +
-    xlab("") + ylab("£ Spent") +
+    xlab("") + ylab("RLI") +
     geom_hline(yintercept = 0)
 
 plotout

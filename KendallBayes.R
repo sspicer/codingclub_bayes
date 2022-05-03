@@ -20,7 +20,7 @@
 #################################################################################################
 #################################################################################################
 
-# Functions: kendallBF, kendallBFDensity, kendallBFCI:
+# Functions: kendallBF, kendallBFCI:
 
 kendallBF <- function(yourKendallTauValue, yourN) {
   # Prior specification Kendall's Tau
